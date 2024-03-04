@@ -30,7 +30,7 @@ pub fn fromClientHello(allocator: Allocator, hello: ClientHello) ![]const u8 {
 
     if (try hello.getExtension(tls.SupportedGroupsExt, allocator)) |curves| {
         defer allocator.free(curves.supported_groups);
-        std.debug.print("{any}\n", .{curves.supported_groups});
+
         for (curves.supported_groups, 0..) |curve, i| {
             if (tls.isGrease(curve))
                 continue;
