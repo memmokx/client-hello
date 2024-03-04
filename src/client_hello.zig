@@ -7,6 +7,70 @@ pub const Extension = struct {
     data: []u8 = &.{},
 };
 
+/// `supported_versions` (43) https://www.rfc-editor.org/rfc/rfc8446.html#section-4.2.1
+pub const SupportedVersionsExt = struct {
+    const identifier: u16 = 43;
+
+    supported_versions: []const u16,
+
+    pub fn fromBytes(allocator: Allocator, bytes: []const u8) !SupportedVersionsExt {
+        var stream = std.io.fixedBufferStream(bytes);
+        var reader = stream.reader();
+        const supported_v_len: usize = @intCast(try reader.readByte());
+
+        var versions = try allocator.alloc(u16, supported_v_len / 2);
+        errdefer allocator.free(versions);
+
+        for (versions) |*v| {
+            v.* = try reader.readInt(u16, .Big);
+        }
+
+        return .{ .supported_versions = versions };
+    }
+};
+
+/// `supported_groups` (10) https://www.rfc-editor.org/rfc/rfc8422.html#section-5.1.1
+pub const SupportedGroupsExt = struct {
+    const identifier: u16 = 10;
+
+    supported_groups: []const u16,
+
+    pub fn fromBytes(allocator: Allocator, bytes: []const u8) !SupportedGroupsExt {
+        var stream = std.io.fixedBufferStream(bytes);
+        var reader = stream.reader();
+        const supported_g_len: usize = try reader.readVarInt(usize, .Big, 2);
+        
+        var versions = try allocator.alloc(u16, supported_g_len / 2);
+        errdefer allocator.free(versions);
+
+        for (versions) |*v| {
+            v.* = try reader.readInt(u16, .Big);
+        }
+
+        return .{ .supported_groups = versions };
+    }
+};
+
+/// `ec_points_formats` (11) https://www.rfc-editor.org/rfc/rfc8422.html#section-5.1.2
+pub const SupportedPointsFormatsExt = struct {
+    const identifier: u16 = 11;
+
+    supported_formats: []const u8,
+
+    pub fn fromBytes(allocator: Allocator, bytes: []const u8) !SupportedPointsFormatsExt {
+        var stream = std.io.fixedBufferStream(bytes);
+        var reader = stream.reader();
+        const supported_f_len: usize = @intCast(try reader.readByte());
+
+        var formats = try allocator.alloc(u8, supported_f_len);
+        errdefer allocator.free(formats);
+
+        _= try reader.readAll(formats);
+
+        return .{ .supported_formats = formats };
+    }
+};
+
 pub const ClientHello = struct {
     version: u16 = 0,
     client_random: []u8 = &.{},
@@ -14,6 +78,24 @@ pub const ClientHello = struct {
     cipher_suites: []u16 = &.{},
     compression_methods: []u8 = &.{},
     extensions: []Extension = &.{},
+
+    pub fn getExtension(self: *const ClientHello, comptime T: type, allocator: Allocator) !?T {
+        const UnmarshalFn = *const fn (Allocator, []const u8) anyerror!T;
+
+        const identifier: u16, const unmarshalFn: UnmarshalFn = switch (T) {
+            SupportedVersionsExt => .{ SupportedVersionsExt.identifier, SupportedVersionsExt.fromBytes },
+            SupportedGroupsExt => .{ SupportedGroupsExt.identifier, SupportedGroupsExt.fromBytes },
+            SupportedPointsFormatsExt => .{ SupportedPointsFormatsExt.identifier, SupportedPointsFormatsExt.fromBytes },
+            else => @compileError("unknown extension passed"),
+        };
+
+        for (self.extensions) |extension| {
+            if (extension.id == identifier)
+                return try unmarshalFn(allocator, extension.data);
+        }
+
+        return null;
+    }
 };
 
 pub fn unmarshalClientHello(allocator: Allocator, bytes: []const u8) !ClientHello {
@@ -106,8 +188,8 @@ fn unmarshalExtensions(allocator: Allocator, reader: anytype, hello: *ClientHell
     hello.extensions = try extensions.toOwnedSlice();
 }
 
-fn isGrease(data: u16) bool {
-    return (data & 0x0a0a) == 0x0a0a and ((data & 0xff00) >> 8) == (data & 0x00ff);
+pub fn isGrease(data: u16) bool {
+    return (data & 0x0f0f) == 0x0a0a;
 }
 
 test "isGrease" {
